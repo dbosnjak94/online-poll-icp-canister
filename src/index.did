@@ -1,0 +1,7 @@
+service: () -> {
+    createPoll: (text, vec text) -> (variant {Ok:text; Err:text});
+    deletePoll: (principal) -> (variant {Ok:text; Err:text});
+    getPollResults: (principal) -> (variant {Ok:record {id:principal; question:text; isActive:text; options:vec record {votes:nat64; optionText:text}}; Err:text}) query;
+    listActivePolls: () -> (variant {Ok:vec record {id:principal; question:text; isActive:text; options:vec record {votes:nat64; optionText:text}}; Err:text}) query;
+    vote: (principal, text) -> (variant {Ok:text; Err:text});
+}

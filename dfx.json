@@ -1,0 +1,15 @@
+{
+  "canisters": {
+    "online_poll": {
+      "type": "custom",
+      "main": "src/index.ts",
+      "candid": "src/index.did",
+      "build": "npx azle online_poll",
+      "root": "src",
+      "ts": "src/index.ts",
+      "candid": "src/index.did",
+      "wasm": ".azle/online_poll/online_poll.wasm",
+      "gzip": true
+    }
+  }
+}
