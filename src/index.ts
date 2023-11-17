@@ -15,70 +15,75 @@ import {
 } from "azle";
 
 // Define a record for a poll option
-const PollOption = Record({
-  optionText: text,
-  votes: nat64,
-});
+type PollOption = {
+  optionText: string;
+  votes: nat64;
+};
 
 // Define a record for a poll
-const Poll = Record({
-  id: Principal,
-  question: text,
-  options: Vec(PollOption),
-  isActive: text,
-});
+type Poll = {
+  id: Principal;
+  question: string;
+  options: Vec<PollOption>;
+  isActive: boolean;
+};
 
 // Define a simple storage structure for polls
-const pollStorage = StableBTreeMap(Principal, Poll, 1);
+const pollStorage = StableBTreeMap<Principal, Poll, 1>();
 
 export default Canister({
   createPoll: update(
     [text, Vec(text)],
-    Result(text, text),
+    Result(Poll, string),
     (question, optionsText) => {
       const pollId = generateId();
-      const options = optionsText.map((optionText) => {
-        return { optionText, votes: 0 };
-      });
-      const newPoll = {
+      const options = optionsText.map((optionText) => ({
+        optionText,
+        votes: 0,
+      }));
+      const newPoll: Poll = {
         id: pollId,
         question,
         options,
-        isActive: "true",
+        isActive: true,
       };
       pollStorage.insert(pollId, newPoll);
-      return Ok(`Poll created with ID: ${pollId.toText()}`);
+      return Ok(newPoll);
     }
   ),
 
-  vote: update([Principal, text], Result(text, text), (pollId, optionText) => {
+  vote: update([Principal, text], Result(string, string), (pollId, optionText) => {
     const poll = pollStorage.get(pollId);
-    if (!poll.Some) {
+    if (!poll) {
       return Err("Poll not found.");
     }
-    if (poll.Some.isActive !== "true") {
+    if (!poll.isActive) {
       return Err("Poll is not active.");
     }
-    const optionIndex = poll.Some.options.findIndex(
-      (option: any) => option.optionText === optionText
+    const optionIndex = poll.options.findIndex(
+      (option) => option.optionText === optionText
     );
     if (optionIndex === -1) {
       return Err("Option not found.");
     }
-    poll.Some.options[optionIndex].votes += 1;
-    pollStorage.insert(pollId, poll.Some);
+    const updatedPoll = {
+      ...poll,
+      options: [
+        ...poll.options.slice(0, optionIndex),
+        { ...poll.options[optionIndex], votes: poll.options[optionIndex].votes + 1 },
+        ...poll.options.slice(optionIndex + 1),
+      ],
+    };
+    pollStorage.insert(pollId, updatedPoll);
     return Ok("Vote recorded.");
   }),
 
-  getPollResults: query([Principal], Result(Poll, text), (pollId) => {
+  getPollResults: query([Principal], Result(Poll, string), (pollId) => {
     const poll = pollStorage.get(pollId);
-    if (!poll.Some) {
-      return Err("Poll not found.");
-    }
-    return Ok(poll.Some);
+    return poll ? Ok(poll) : Err("Poll not found.");
   }),
 
-  deletePoll: update([Principal], Result(text, text), (pollId) => {
+  deletePoll: update([Principal], Result(string, string), (pollId) => {
     if (!pollStorage.containsKey(pollId)) {
       return Err("Poll not found.");
     }
@@ -86,29 +91,16 @@ export default Canister({
     return Ok("Poll deleted.");
   }),
 
-  listActivePolls: query([], Result(Vec(Poll), text), () => {
+  listActivePolls: query([], Result(Vec<Poll>, string), () => {
     const activePolls = pollStorage
       .values()
-      .filter((poll: any) => poll.isActive === "true");
+      .filter((poll) => poll.isActive);
     return Ok(activePolls);
   }),
 });
 
 function generateId(): Principal {
-  const randomBytes = new Array(29)
-    .fill(0)
-    .map(() => Math.floor(Math.random() * 256));
-  return Principal.fromUint8Array(Uint8Array.from(randomBytes));
+  const randomBytes = new Uint8Array(29);
+  crypto.getRandomValues(randomBytes);
+  return Principal.fromUint8Array(randomBytes);
 }
-
-// a workaround to make uuid package work with Azle
-globalThis.crypto = {
-  // @ts-ignore
-  getRandomValues: () => {
-    let array = new Uint8Array(32);
-    for (let i = 0; i < array.length; i++) {
-      array[i] = Math.floor(Math.random() * 256);
-    }
-    return array;
-  },
-};
