@@ -1,104 +1,133 @@
 import {
-  Canister,
-  query,
-  update,
-  text,
-  Principal,
+  $query,
+  $update,
   Vec,
   Record,
   StableBTreeMap,
   Result,
-  Ok,
-  Err,
   nat64,
-  ic,
+  match,
 } from "azle";
+import { v4 as uuidv4 } from "uuid";
 
 // Define a record for a poll option
-const PollOption = Record({
-  optionText: text,
-  votes: nat64,
-});
+type PollOption = Record<{
+  optionText: string;
+  votes: nat64;
+}>;
 
 // Define a record for a poll
-const Poll = Record({
-  id: Principal,
-  question: text,
-  options: Vec(PollOption),
-  isActive: text,
-});
+type Poll = Record<{
+  id: string;
+  question: string;
+  options: Vec<PollOption>;
+  isActive: string;
+}>;
 
 // Define a simple storage structure for polls
-const pollStorage = StableBTreeMap(Principal, Poll, 1);
+const pollStorage = new StableBTreeMap<string, Poll>(0, 44, 1024);
 
-export default Canister({
-  createPoll: update(
-    [text, Vec(text)],
-    Result(text, text),
-    (question, optionsText) => {
-      const pollId = generateId();
-      const options = optionsText.map((optionText) => {
-        return { optionText, votes: 0 };
-      });
-      const newPoll = {
-        id: pollId,
-        question,
-        options,
-        isActive: "true",
-      };
-      pollStorage.insert(pollId, newPoll);
-      return Ok(`Poll created with ID: ${pollId.toText()}`);
-    }
-  ),
+$update;
+export function createPoll(
+  question: string,
+  optionsText: Vec<string>
+): Result<Poll, string> {
+  // Payload Validation
+  if (!question || optionsText.length === 0) {
+    return Result.Err<Poll, string>("Invalid payload for creating a poll.");
+  }
 
-  vote: update([Principal, text], Result(text, text), (pollId, optionText) => {
-    const poll = pollStorage.get(pollId);
-    if (!poll.Some) {
-      return Err("Poll not found.");
-    }
-    if (poll.Some.isActive !== "true") {
-      return Err("Poll is not active.");
-    }
-    const optionIndex = poll.Some.options.findIndex(
-      (option: any) => option.optionText === optionText
-    );
-    if (optionIndex === -1) {
-      return Err("Option not found.");
-    }
-    poll.Some.options[optionIndex].votes += 1;
-    pollStorage.insert(pollId, poll.Some);
-    return Ok("Vote recorded.");
-  }),
+  const pollId = uuidv4();
+  const newPoll: Poll = {
+    id: pollId,
+    question,
+    options: optionsText.map((optionText) => ({ optionText, votes: BigInt(0) })),
+    isActive: "true",
+  };
 
-  getPollResults: query([Principal], Result(Poll, text), (pollId) => {
-    const poll = pollStorage.get(pollId);
-    if (!poll.Some) {
-      return Err("Poll not found.");
-    }
-    return Ok(poll.Some);
-  }),
+  try {
+    // Error Handling
+    pollStorage.insert(pollId, newPoll);
+    return Result.Ok(newPoll);
+  } catch (error) {
+    return Result.Err<Poll, string>("Error creating the poll.");
+  }
+}
 
-  deletePoll: update([Principal], Result(text, text), (pollId) => {
-    if (!pollStorage.containsKey(pollId)) {
-      return Err("Poll not found.");
-    }
-    pollStorage.remove(pollId);
-    return Ok("Poll deleted.");
-  }),
+$update;
+export function vote(pollId: string, optionText: string): Result<string, string> {
+  // Parameter Validation
+  if (!pollId || typeof pollId !== "string" || !optionText) {
+    return Result.Err<string, string>("Invalid parameters for voting.");
+  }
 
-  listActivePolls: query([], Result(Vec(Poll), text), () => {
-    const activePolls = pollStorage
-      .values()
-      .filter((poll: any) => poll.isActive === "true");
-    return Ok(activePolls);
-  }),
-});
+  const pollOpt = pollStorage.get(pollId);
+  return match(pollOpt, {
+    Some: (poll) => {
+      // Check if the poll is active
+      if (poll.isActive !== "true") {
+        return Result.Err<string, string>("Poll is not active.");
+      }
 
-function generateId(): Principal {
-  const randomBytes = new Array(29)
-    .fill(0)
-    .map(() => Math.floor(Math.random() * 256));
-  return Principal.fromUint8Array(Uint8Array.from(randomBytes));
+      // Check if the optionText exists
+      const optionIndex = poll.options.findIndex(
+        (option) => option.optionText === optionText
+      );
+
+      if (optionIndex === -1) {
+        return Result.Err<string, string>("Option not found.");
+      }
+
+      // Update votes
+      poll.options[optionIndex].votes = BigInt(poll.options[optionIndex].votes) + BigInt(1);
+      pollStorage.insert(pollId, poll);
+
+      return Result.Ok<string, string>("Vote recorded.");
+    },
+    None: () => Result.Err<string, string>("Poll not found."),
+  });
+}
+
+$query;
+export function getPollResults(pollId: string): Result<Poll, string> {
+  // Parameter Validation
+  if (!pollId || typeof pollId !== "string") {
+    return Result.Err<Poll, string>("Invalid pollId for retrieving results.");
+  }
+
+  const pollOpt = pollStorage.get(pollId);
+  return match(pollOpt, {
+    Some: (poll) => Result.Ok<Poll, string>(poll),
+    None: () => Result.Err<Poll, string>("Poll not found."),
+  });
+}
+
+$update;
+export function deletePoll(pollId: string): Result<string, string> {
+  // Parameter Validation
+  if (!pollId || typeof pollId !== "string") {
+    return Result.Err<string, string>("Invalid pollId for deleting the poll.");
+  }
+
+  // Check if the poll exists
+  if (!pollStorage.containsKey(pollId)) {
+    return Result.Err<string, string>("Poll not found.");
+  }
+
+  // Delete the poll
+  pollStorage.remove(pollId);
+  return Result.Ok("Poll deleted.");
+}
+
+$query;
+export function listActivePolls(): Result<Vec<Poll>, string> {
+  try {
+    // Error Handling
+    const activePolls = pollStorage.values().filter((poll) => poll.isActive === "true");
+    return Result.Ok(activePolls);
+  } catch (error) {
+    return Result.Err<Vec<Poll>, string>("Error listing active polls.");
+  }
 }
 
 // a workaround to make uuid package work with Azle
